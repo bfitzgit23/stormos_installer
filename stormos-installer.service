@@ -1,0 +1,14 @@
+[Unit]
+Description=StormOS Installer GUI
+After=graphical.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/stormos-installer
+Restart=never
+User=%I
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/%I/.Xauthority"
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=StormOS Installer
+Exec=stormos-installer
+Icon=stormos-installer
+Terminal=false
+Type=Application
+Categories=System;Utility;
+Comment=Copy live ISO to disk with dark mode UI
