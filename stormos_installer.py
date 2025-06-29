@@ -1,30 +1,18 @@
 #!/usr/bin/env python3
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, GObject
+
 import os
 import sys
 import subprocess
-import stat
 import shutil
+import stat
 import configparser
-import getpass
 
 APP_NAME = "StormOS Installer"
 
-# === DEFINE STYLES ===
-LIGHT_STYLE = """
-window {
-    background-color: #f8f8f8;
-    color: #000000;
-}
-button {
-    background-color: #e0e0e0;
-    color: black;
-    padding: 10px;
-}
-"""
-
+# === DARK MODE STYLE ===
 DARK_STYLE = """
 window {
     background-color: #2e2e2e;
@@ -47,10 +35,9 @@ class StormOSInstaller(Gtk.Window):
         self.set_default_size(600, 400)
         self.set_position(Gtk.WindowPosition.CENTER)
 
-        self.target_drive = None
-
-        # Apply dark mode by default
         self.apply_css(DARK_STYLE)
+
+        self.target_drive = None
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.add(vbox)
@@ -70,15 +57,7 @@ class StormOSInstaller(Gtk.Window):
         drive_box.pack_start(self.refresh_drives_button, False, False, 0)
         vbox.pack_start(drive_box, False, False, 0)
 
-        # Dark mode toggle (optional)
-        self.mode_switch = Gtk.Switch()
-        self.mode_switch.connect("notify::active", self.on_mode_toggled)
-        hbox = Gtk.Box(spacing=6)
-        hbox.pack_start(Gtk.Label(label="Dark Mode"), False, False, 0)
-        hbox.pack_start(self.mode_switch, False, False, 0)
-        vbox.pack_start(hbox, False, False, 0)
-
-        # Start Install Button
+        # Install Button
         install_button = Gtk.Button(label="Start Installation (Copy ISO to Disk)")
         install_button.connect("clicked", self.on_install_clicked)
         vbox.pack_start(install_button, False, False, 0)
@@ -88,18 +67,11 @@ class StormOSInstaller(Gtk.Window):
 
     def apply_css(self, css_data):
         provider = Gtk.CssProvider()
-        bytes_data = css_data.encode()
-        provider.load_from_data(GLib.Bytes.new(bytes_data))
+        bytes_data = css_data.encode('utf-8')  # Encode as UTF-8
+        provider.load_from_data(bytes_data)   # Pass raw bytes
         screen = Gdk.Screen.get_default()
         context = Gtk.StyleContext()
         context.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
-
-    def on_mode_toggled(self, switch, gparam):
-        dark_mode = switch.get_active()
-        if dark_mode:
-            self.apply_css(DARK_STYLE)
-        else:
-            self.apply_css(LIGHT_STYLE)
 
     def on_refresh_clicked(self, widget=None):
         self.drive_combo.remove_all()
@@ -107,6 +79,7 @@ class StormOSInstaller(Gtk.Window):
         try:
             output = subprocess.check_output(["lsblk", "-d", "-o", "NAME,SIZE,MODEL"], text=True)
             lines = output.strip().split('\n')[1:]  # Skip header
+
             for line in lines:
                 parts = line.split()
                 name = parts[0]
@@ -146,7 +119,7 @@ class StormOSInstaller(Gtk.Window):
         os.makedirs("/mnt/boot", exist_ok=True)
         subprocess.check_call(["mount", f"{device}1", "/mnt/boot"])
 
-        # Copy files
+        # Copy live ISO contents
         exclude = ["/proc", "/sys", "/run", "/tmp", "/dev", "/boot", "/var/cache/pacman/pkg"]
 
         for src_dir in ["/", "/boot", "/etc", "/usr", "/var"]:
@@ -221,7 +194,6 @@ def main():
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
     Gtk.main()
-
 
 if __name__ == "__main__":
     main()
