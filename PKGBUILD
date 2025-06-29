@@ -4,7 +4,7 @@ pkgver=1.0
 pkgrel=1
 pkgdesc="StormOS Installer – Custom GTK 3.0 installer that copies ISO to disk"
 arch=('any')
-url="https://github.com/bfitzgit23/stormos_installer "
+url="https://github.com/bfitzgit23/stormos_installer"
 license=('GPL3')
 depends=(
     'python'
@@ -20,7 +20,7 @@ depends=(
     'networkmanager'
 )
 makedepends=('git')
-source=("stormos-installer::git+https://github.com/bfitzgit23/stormos_installer.git ")
+source=("stormos-installer::git+https://github.com/bfitzgit23/stormos_installer.git")
 sha256sums=('SKIP')
 
 pkgver() {
