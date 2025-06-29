@@ -1,43 +1,23 @@
-#!/usr/bin/env python3
+import os
+import sys
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
-
-import os
-import sys
 import subprocess
-import stat
+import configparser
 import shutil
-import tempfile
-import getpass
 
 APP_NAME = "StormOS Installer"
-INSTALL_DIR = "/etc/stormos-installer"
-MODULES_DIR = f"{INSTALL_DIR}/modules"
-
-DARK_STYLE = """
-window {
-    background-color: #2e2e2e;
-    color: #ffffff;
-}
-button {
-    background-color: #444;
-    color: white;
-    padding: 10px;
-}
-"""
 
 class StormOSInstaller(Gtk.Window):
     def __init__(self):
-        if not Gtk.init_check()[0]:
-            print("GTK init failed")
-            sys.exit(1)
-
         Gtk.Window.__init__(self, title=APP_NAME)
-        self.set_default_size(500, 300)
+        self.set_default_size(600, 400)
         self.set_position(Gtk.WindowPosition.CENTER)
 
         self.apply_css(DARK_STYLE)
+
+        self.target_drive = None
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.add(vbox)
@@ -46,8 +26,18 @@ class StormOSInstaller(Gtk.Window):
         label.set_markup("<big>Welcome to <b>StormOS Installer</b></big>")
         vbox.pack_start(label, True, True, 0)
 
-        # Install Button
-        install_button = Gtk.Button(label="Start Installation (Copy ISO to Disk)")
+        self.drive_combo = Gtk.ComboBoxText()
+        self.refresh_drives()
+
+        refresh_button = Gtk.Button(label="Refresh Drives")
+        refresh_button.connect("clicked", lambda _: self.refresh_drives())
+
+        drive_box = Gtk.Box(spacing=6)
+        drive_box.pack_start(self.drive_combo, True, True, 0)
+        drive_box.pack_start(refresh_button, False, False, 0)
+        vbox.pack_start(drive_box, False, False, 0)
+
+        install_button = Gtk.Button(label="Start Installation")
         install_button.connect("clicked", self.on_install_clicked)
         vbox.pack_start(install_button, False, False, 0)
 
@@ -59,93 +49,42 @@ class StormOSInstaller(Gtk.Window):
         context = Gtk.StyleContext()
         context.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
 
-    def on_install_clicked(self, widget):
-        dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.YES_NO,
-            text="Confirm Installation",
-        )
-        dialog.format_secondary_text("This will erase /dev/sda and copy all files from this ISO to the target system.\nAre you sure you want to continue?")
-        response = dialog.run()
-        dialog.destroy()
-
-        if response != Gtk.ResponseType.YES:
-            return
-
+    def refresh_drives(self, widget=None):
+        self.drive_combo.remove_all()
         try:
-            self.do_iso_to_disk_copy()
+            output = subprocess.check_output(["lsblk", "-d", "-o", "NAME,SIZE,MODEL"], text=True)
+            lines = output.strip().split('\n')[1:]  # Skip header
+            for line in lines:
+                parts = line.split()
+                name = parts[0]
+                size = parts[1]
+                model = ' '.join(parts[2:])
+                self.drive_combo.append_text(f"/dev/{name} - {size} - {model}")
         except Exception as e:
-            dialog = Gtk.MessageDialog(
-                transient_for=self,
-                flags=0,
-                message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK,
-                text="Installation Failed",
-            )
-            dialog.format_secondary_text(str(e))
-            dialog.run()
-            dialog.destroy()
-            Gtk.main_quit()
+            print("Error reading drives:", e)
 
-    def do_iso_to_disk_copy(self):
-        # Step 1: Wipe and partition /dev/sda
-        print("[+] Partitioning /dev/sda...")
-        subprocess.check_call(["sgdisk", "--zap-all", "/dev/sda"])
-        subprocess.check_call(["sgdisk", "--new", "1:0:+512M", "--typecode=1:ef00", "--change-name=1:'EFI System'", "/dev/sda"])
-        subprocess.check_call(["sgdisk", "--new", "2:0:0", "--typecode=2:8300", "--change-name=2:'Linux Root'", "/dev/sda"])
+    def do_iso_to_disk_copy(self, device):
+        print(f"[+] Using device: {device}")
 
-        # Step 2: Format partitions
-        print("[+] Formatting EFI and root partitions...")
-        subprocess.check_call(["mkfs.fat", "-F32", "/dev/sda1"])
-        subprocess.check_call(["mkfs.ext4", "/dev/sda2"])
+        # Read config
+        config = configparser.ConfigParser()
+        config.read("/etc/stormos-installer/settings.conf")
+        desktop = config["installer"]["desktop"]
 
-        # Step 3: Mount them
-        print("[+] Mounting partitions...")
-        os.makedirs("/mnt", exist_ok=True)
-        subprocess.check_call(["mount", "/dev/sda2", "/mnt"])
-        os.makedirs("/mnt/boot", exist_ok=True)
-        subprocess.check_call(["mount", "/dev/sda1", "/mnt/boot"])
+        print(f"[+] Installing {desktop} system...")
 
-        # Step 4: Copy all live ISO files to /mnt
-        print("[+] Copying files from live ISO to /mnt...")
+        # Load modules
+        module_dir = "/etc/stormos-installer/modules/"
+        modules = sorted(os.listdir(module_dir))
 
-        exclude = ["/proc", "/sys", "/run", "/tmp", "/dev", "/boot", "/etc", "/var/cache/pacman/pkg"]
+        for mod in modules:
+            if mod.endswith(".conf"):
+                print(f"[+] Running module: {mod}")
+                # You can parse each .conf file here
+            elif mod.endswith(".sh"):
+                print(f"[+] Running script: {mod}")
+                subprocess.run([os.path.join(module_dir, mod)], check=True)
 
-        for src_dir in ["/", "/boot", "/etc", "/usr", "/var"]:
-            if os.path.exists(src_dir):
-                print(f"[+] Copying {src_dir}...")
-                shutil.copytree(
-                    src_dir,
-                    f"/mnt{src_dir}",
-                    symlinks=True,
-                    ignore=lambda src, names: [name for name in names if os.path.join(src, name) in exclude],
-                    dirs_exist_ok=True
-                )
-
-        # Step 5: Write fstab
-        print("[+] Generating fstab...")
-        with open("/mnt/etc/fstab", "w") as f:
-            f.write("UUID=$(blkid -s UUID -o value /dev/sda2)\necho UUID=\$UUID / ext4 defaults 0 1\n" +
-                    "UUID=$(blkid -s UUID -o value /dev/sda1)\necho UUID=\$UUID /boot vfat defaults 0 2\n")
-        subprocess.check_call(["genfstab", "-U", "/mnt", ">>", "/mnt/etc/fstab"], shell=True)
-
-        # Step 6: Chroot setup
-        print("[+] Setting up bootloader...")
-        subprocess.check_call(["arch-chroot", "/mnt", "grub-install", "--target=x86_64-efi", "--efi-directory=/boot", "--bootloader-id=GRUB"])
-        subprocess.check_call(["arch-chroot", "/mnt", "grub-mkconfig", "-o", "/boot/grub/grub.cfg"])
-
-        # Step 7: Set hostname
-        print("[+] Setting hostname...")
-        with open("/mnt/etc/hostname", "w") as f:
-            f.write("stormos\n")
-
-        # Step 8: Enable services
-        print("[+] Enabling services...")
-        subprocess.check_call(["arch-chroot", "/mnt", "systemctl", "enable", "NetworkManager.service"])
-
-        print("[+] Installation complete!")
         dialog = Gtk.MessageDialog(
             transient_for=self,
             flags=0,
@@ -153,10 +92,34 @@ class StormOSInstaller(Gtk.Window):
             buttons=Gtk.ButtonsType.OK,
             text="Installation Complete",
         )
-        dialog.format_secondary_text("Your system has been installed. You can now reboot.")
+        dialog.format_secondary_text("Your system has been installed. Reboot now.")
         dialog.run()
         dialog.destroy()
-        Gtk.main_quit()
+
+    def on_install_clicked(self, widget):
+        selected = self.drive_combo.get_active_text()
+        if not selected:
+            dialog = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.WARNING, buttons=Gtk.ButtonsType.OK, text="No Drive Selected")
+            dialog.format_secondary_text("Please select a target drive before installing.")
+            dialog.run()
+            dialog.destroy()
+            return
+
+        device = selected.split()[0]  # Extract /dev/sda from combo box
+
+        confirm_dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text="Confirm Installation",
+        )
+        confirm_dialog.format_secondary_text(f"This will erase {device} and copy all files from this ISO to the drive.\nAre you sure you want to continue?")
+        response = confirm_dialog.run()
+        confirm_dialog.destroy()
+
+        if response == Gtk.ResponseType.YES:
+            self.do_iso_to_disk_copy(device)
 
 
 def main():
