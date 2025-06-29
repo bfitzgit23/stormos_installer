@@ -7,6 +7,7 @@ import os
 import sys
 import subprocess
 import shutil
+import tempfile
 import stat
 import configparser
 
@@ -62,16 +63,57 @@ class StormOSInstaller(Gtk.Window):
         install_button.connect("clicked", self.on_install_clicked)
         vbox.pack_start(install_button, False, False, 0)
 
+        # Bottom Buttons: Reboot / Quit
+        self.reboot_button = Gtk.Button(label="Reboot System")
+        self.reboot_button.set_sensitive(False)
+        self.reboot_button.connect("clicked", self.on_reboot_clicked)
+
+        self.quit_button = Gtk.Button(label="Quit Installer")
+        self.quit_button.connect("clicked", self.on_quit_clicked)
+
+        button_box = Gtk.Box(spacing=6)
+        button_box.pack_start(self.reboot_button, True, True, 0)
+        button_box.pack_start(self.quit_button, True, True, 0)
+        vbox.pack_start(button_box, False, False, 0)
+
         # Refresh drives initially
         self.on_refresh_clicked(None)
 
+        # Create modular config files
+        self.create_module_configs()
+
     def apply_css(self, css_data):
         provider = Gtk.CssProvider()
-        bytes_data = css_data.encode('utf-8')  # Encode as UTF-8
+        bytes_data = css_data.encode('utf-8')  # Ensure UTF-8 encoding
         provider.load_from_data(bytes_data)   # Pass raw bytes
         screen = Gdk.Screen.get_default()
         context = Gtk.StyleContext()
         context.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+
+    def create_module_configs(self):
+        module_dir = "/etc/stormos-installer/modules"
+        os.makedirs(module_dir, exist_ok=True)
+
+        # Sample users.conf
+        user_conf = os.path.join(module_dir, "users.conf")
+        if not os.path.exists(user_conf):
+            with open(user_conf, "w") as f:
+                f.write("[users]\nusername=storm\npassword=storm\nhostname=stormos\nautologin=true\nsudoers_nopasswd=true\n")
+
+        # Sample partition.conf
+        part_conf = os.path.join(module_dir, "partition.conf")
+        if not os.path.exists(part_conf):
+            with open(part_conf, "w") as f:
+                f.write("[partition]\ntype=auto\nswap=false\nbootloader_device=/dev/sda\nformat=true\nmount_point=/mnt\n")
+
+        # Sample postinstall.sh
+        post_sh = os.path.join(module_dir, "postinstall.sh")
+        if not os.path.exists(post_sh):
+            with open(post_sh, "w") as f:
+                f.write("#!/bin/bash\nset -e\n\necho 'Setting hostname...'\necho 'stormos' > /mnt/etc/hostname\nln -sf /usr/share/zoneinfo/Region/City /mnt/etc/localtime\nhwclock --systohc\n\n# Enable services\narch-chroot /mnt systemctl enable NetworkManager.service\n")
+            os.chmod(post_sh, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH)
+
+        print(f"[+] Created modular configs in {module_dir}")
 
     def on_refresh_clicked(self, widget=None):
         self.drive_combo.remove_all()
@@ -141,21 +183,14 @@ class StormOSInstaller(Gtk.Window):
         subprocess.check_call(["arch-chroot", "/mnt", "grub-install", "--target=x86_64-efi", "--efi-directory=/boot", "--bootloader-id=GRUB"])
         subprocess.check_call(["arch-chroot", "/mnt", "grub-mkconfig", "-o", "/boot/grub/grub.cfg"])
 
-        # Enable services
-        subprocess.check_call(["arch-chroot", "/mnt", "systemctl", "enable", "NetworkManager.service"])
+        # Run postinstall.sh
+        postinstall_script = "/etc/stormos-installer/modules/postinstall.sh"
+        if os.path.exists(postinstall_script):
+            print("[+] Running postinstall.sh...")
+            subprocess.check_call(["bash", postinstall_script])
 
         print("[+] Installation complete!")
-
-        dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text="Installation Complete",
-        )
-        dialog.format_secondary_text("Your system has been installed. You can now reboot.")
-        dialog.run()
-        dialog.destroy()
+        self.reboot_button.set_sensitive(True)
 
     def on_install_clicked(self, widget):
         selected = self.drive_combo.get_active_text()
@@ -187,6 +222,14 @@ class StormOSInstaller(Gtk.Window):
 
         if response == Gtk.ResponseType.YES:
             self.do_iso_to_disk_copy(device)
+
+    def on_reboot_clicked(self, widget):
+        print("[+] Rebooting system...")
+        subprocess.check_call(["reboot"])
+
+    def on_quit_clicked(self, widget):
+        print("[+] Exiting installer...")
+        Gtk.main_quit()
 
 
 def main():
